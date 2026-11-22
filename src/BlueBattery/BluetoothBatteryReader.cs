@@ -1,5 +1,3 @@
-using Windows.Devices.Enumeration;
-
 namespace BlueBattery;
 
 /// <summary>Akkustand eines gekoppelten Bluetooth-Geräts.</summary>
@@ -12,31 +10,28 @@ public sealed record DeviceBattery(Guid ContainerId, string Name, int Level, boo
 /// </summary>
 public static class BluetoothBatteryReader
 {
-    private const string BatteryKey = "{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2";
-    private const string ContainerIdKey = "System.Devices.ContainerId";
+    public static Task<IReadOnlyList<DeviceBattery>> ReadAsync() => Task.Run(Read);
 
-    private const string ContainerConnectedKey = "System.Devices.Connected";
-
-    public static async Task<IReadOnlyList<DeviceBattery>> ReadAsync()
+    private static IReadOnlyList<DeviceBattery> Read()
     {
         // 1. Alle vorhandenen Geräteknoten, die einen Akkustand melden.
-        var nodes = await DeviceInformation.FindAllAsync(
-            "System.Devices.Present:=System.StructuredQueryType.Boolean#True",
-            [BatteryKey, ContainerIdKey],
-            DeviceInformationKind.Device);
+        var nodes = DeviceQuery.GetObjects(DevObjectType.Device,
+            DeviceQuery.BluetoothBattery, DeviceQuery.ContainerId, DeviceQuery.Name, DeviceQuery.IsPresent);
 
         var batteryByContainer = new Dictionary<Guid, (string Name, int Level)>();
         foreach (var node in nodes)
         {
-            if (!node.Properties.TryGetValue(BatteryKey, out var raw) || raw is null)
+            if (node.Get<int>(DeviceQuery.BluetoothBattery) is not int raw)
                 continue;
-            if (!node.Properties.TryGetValue(ContainerIdKey, out var c) || c is not Guid container)
+            if (node.Get<bool>(DeviceQuery.IsPresent) == false)
+                continue;
+            if (node.Get<Guid>(DeviceQuery.ContainerId) is not Guid container)
                 continue;
 
-            int level = Math.Clamp(Convert.ToInt32(raw), 0, 100);
+            int level = Math.Clamp(raw, 0, 100);
             // Meldet ein Gerät über mehrere Knoten, zählt der niedrigste Wert.
             if (!batteryByContainer.TryGetValue(container, out var existing) || level < existing.Level)
-                batteryByContainer[container] = (node.Name, level);
+                batteryByContainer[container] = (node.GetString(DeviceQuery.Name) ?? "Unbekanntes Gerät", level);
         }
 
         if (batteryByContainer.Count == 0)
@@ -45,18 +40,15 @@ public static class BluetoothBatteryReader
         // 2. Gerätecontainer für Anzeigename ("Flow Headset" statt "... Hands-Free AG") und
         //    Verbindungsstatus. Bewusst keine AssociationEndpoint-Abfrage: die stößt eine
         //    Bluetooth-Suche an und dauert ~30 s.
-        var containers = await DeviceInformation.FindAllAsync(
-            "",
-            [ContainerConnectedKey],
-            DeviceInformationKind.DeviceContainer);
+        var containers = DeviceQuery.GetObjects(DevObjectType.DeviceContainer,
+            DeviceQuery.Name, DeviceQuery.ContainerIsConnected);
 
-        var containerInfo = new Dictionary<Guid, (string Name, bool Connected)>();
+        var containerInfo = new Dictionary<Guid, (string? Name, bool Connected)>();
         foreach (var c in containers)
         {
             if (!Guid.TryParse(c.Id, out var id))
                 continue;
-            bool connected = c.Properties.TryGetValue(ContainerConnectedKey, out var v) && v is true;
-            containerInfo[id] = (c.Name, connected);
+            containerInfo[id] = (c.GetString(DeviceQuery.Name), c.Get<bool>(DeviceQuery.ContainerIsConnected) ?? false);
         }
 
         // 3. Zusammenführen.

@@ -28,7 +28,7 @@ für die auch die Windows-Einstellungen einen Akkustand zeigen.
 
 ## Voraussetzungen
 
-- Windows 10 (2004) oder neuer
+- Windows 10 (1809) oder neuer
 - .NET 10 SDK
 
 ## Bauen und starten
